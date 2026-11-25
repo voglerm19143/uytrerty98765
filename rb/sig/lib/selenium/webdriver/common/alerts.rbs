@@ -47,6 +47,8 @@ module Selenium
 
       def remove_handler: (Object handle) -> nil
 
+      attr_reader unhandled_prompt_behavior: String
+
       def subscribe: () -> void
 
       def current: () -> Prompt
@@ -57,7 +59,7 @@ module Selenium
 
       private
 
-      def manage_prompts_locally: (Hash[String, untyped] capabilities) -> void
+      def manage_prompts_locally: (Hash[String, untyped] capabilities) -> String
 
       def listen_prompt_opened: () -> void
 
@@ -65,7 +67,11 @@ module Selenium
 
       def wait_for_beforeunload_to_close: () -> void
 
+      def refusing_prompt: () -> Prompt?
+
       def user_handler?: () -> bool
+
+      def behavior: () -> String
 
       def default_handler: (Alert alert) -> void
 

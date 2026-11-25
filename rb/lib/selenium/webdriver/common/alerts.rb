@@ -21,7 +21,8 @@ module Selenium
     #
     # Handlers for the alerts a page opens in a BiDi session, reached through Driver#alerts.
     #
-    # Alerts stay open for the Alert API (Driver#switch_to#alert) unless a handler closes them;
+    # Alerts stay open for the Alert API (Driver#switch_to#alert) unless a handler closes them, and with no
+    # handler the unhandledPromptBehavior capability is applied to the commands they are in the way of;
     # while a handler is registered it is called with every alert, including beforeunload prompts.
     # Handlers are added and removed from the thread that drives the browser.
     #
@@ -53,7 +54,7 @@ module Selenium
         @handlers = {Object.new => method(:default_handler)}
         @prompts = {}
         @mutex = Mutex.new
-        manage_prompts_locally(capabilities)
+        @unhandled_prompt_behavior = manage_prompts_locally(capabilities)
       end
 
       #
@@ -78,6 +79,12 @@ module Selenium
         nil
       end
 
+      # The value applied while no handler is registered
+      # Called by BiDiBridge#create_session
+      #
+      # @api private
+      attr_reader :unhandled_prompt_behavior
+
       # Called by BiDiBridge#create_session once the BiDi connection is up
       #
       # @api private
@@ -98,16 +105,33 @@ module Selenium
         prompt_in(@bridge.current_window) || raise(Error::NoSuchAlertError, 'no such alert')
       end
 
-      # chromedriver returns from a click that opens a beforeunload prompt while the default handler is accepting
-      # it, and refuses the next command until it is closed; returns once it is, so the command is sent again
+      # Applies unhandledPromptBehavior to an alert that refused the command, or waits out chromedriver's beforeunload
+      # refusal; returns when the command is to be sent again
       # Called by BiDiBridge#execute
       #
       # @api private
       def manage_exception(error)
         raise error if user_handler?
-        raise error unless error.is_a?(Error::InvalidArgumentError) && error.message.include?('beforeunload')
 
-        wait_for_beforeunload_to_close
+        case error
+        when Error::InvalidArgumentError
+          # chromedriver returns from a click that opens a beforeunload prompt while the default handler is
+          # accepting it, and refuses the next command until it is closed
+          raise error unless error.message.include?('beforeunload')
+
+          wait_for_beforeunload_to_close
+        when Error::UnexpectedAlertOpenError
+          raise error if behavior == 'ignore'
+
+          prompt = refusing_prompt
+          # chromedriver can refuse a command for an alert BiDi has just closed
+          return unless prompt
+
+          behavior.start_with?('accept') ? @bridge.accept_alert(prompt) : @bridge.dismiss_alert(prompt)
+          raise error if behavior.end_with?('notify')
+        else
+          raise error
+        end
       end
 
       # Drops the record of a prompt the bridge has closed
@@ -124,11 +148,15 @@ module Selenium
       # A BiDi remote end settles a prompt as it opens, before the Alert API or a handler can reach it
       def manage_prompts_locally(capabilities)
         capabilities = capabilities['alwaysMatch'] || capabilities
-        if capabilities.key?('unhandledPromptBehavior')
-          raise ArgumentError, 'unhandledPromptBehavior is not supported in a BiDi session; ' \
-                               'handle alerts with Driver#alerts or the Alert API'
+        behavior = capabilities['unhandledPromptBehavior']
+        if behavior.is_a?(Hash)
+          WebDriver.logger.deprecate('a map for unhandledPromptBehavior (only its default entry is applied)',
+                                     'its classic String value or use Alerts#add_handler',
+                                     id: :unhandled_prompt_behavior)
+          behavior = behavior.transform_keys(&:to_s)['default']
         end
         capabilities['unhandledPromptBehavior'] = {'default' => 'ignore'}
+        behavior || 'dismiss and notify'
       end
 
       def listen_prompt_opened
@@ -161,9 +189,21 @@ module Selenium
         end
       end
 
+      # The remote end can refuse a command before the alert's opened event has been recorded
+      def refusing_prompt
+        Wait.new(timeout: 1, interval: 0.05).until { prompt_in(@bridge.current_window) }
+      rescue Error::TimeoutError
+        nil
+      end
+
       # The first handler is the default one
       def user_handler?
         @handlers.size > 1
+      end
+
+      # A registered handler leaves alerts to the user, as 'ignore' does
+      def behavior
+        user_handler? ? 'ignore' : @unhandled_prompt_behavior
       end
 
       # Classic never leaves a beforeunload prompt open
@@ -187,8 +227,7 @@ module Selenium
         @mutex.synchronize { @prompts[window] }
       end
 
-      # Remote ends do not refuse commands sent to a context with a prompt open, so they are refused here
-      # until they implement https://github.com/w3c/webdriver-bidi/pull/1185
+      # Remote ends do not refuse commands sent to a context with a prompt open, so the behavior is applied here
       def before_bidi_command(payload)
         return if payload[:method] == 'browsingContext.handleUserPrompt'
 
@@ -200,7 +239,11 @@ module Selenium
         # The default handler is accepting it
         return wait_for_beforeunload_to_close if prompt.type == 'beforeunload' && !user_handler?
 
-        raise Error::UnexpectedAlertOpenError, "unexpected alert open: {Alert text : #{prompt.text}}"
+        error = Error::UnexpectedAlertOpenError.new("unexpected alert open: {Alert text : #{prompt.text}}")
+        raise error if behavior == 'ignore'
+
+        behavior.start_with?('accept') ? @bridge.accept_alert(prompt) : @bridge.dismiss_alert(prompt)
+        raise error if behavior.end_with?('notify')
       end
 
       def window_of(payload)

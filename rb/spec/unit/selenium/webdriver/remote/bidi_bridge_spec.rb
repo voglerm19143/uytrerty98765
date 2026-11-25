@@ -56,14 +56,6 @@ module Selenium
             )
           end
 
-          it 'raises without creating a session when unhandledPromptBehavior is set' do
-            stub_new_session(true)
-
-            expect { bridge.create_session('browserName' => 'safari', 'unhandledPromptBehavior' => 'accept') }
-              .to raise_error(ArgumentError, /unhandledPromptBehavior is not supported/)
-            expect(http).not_to have_received(:request)
-          end
-
           it 'quits the remote session when the webSocketUrl is invalid' do
             stub_new_session(true)
 

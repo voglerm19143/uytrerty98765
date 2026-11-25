@@ -33,7 +33,7 @@ module Selenium
           @alerts = Alerts.new(self, capabilities)
           super
           # The remote end reports the 'ignore' it was sent, which is not what applies
-          @capabilities[:unhandled_prompt_behavior] = nil
+          @capabilities[:unhandled_prompt_behavior] = @alerts.unhandled_prompt_behavior
 
           begin
             @bidi = Selenium::WebDriver::BiDi.new(url: validated_socket_url)
