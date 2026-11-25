@@ -32,13 +32,29 @@ module Selenium
 
         attr_reader listener_errors: ListenerErrors
 
+        attr_reader alerts: Alerts
+
         def create_session: (untyped capabilities) -> void
 
         def quit: () -> void
 
         def close: () -> void
 
+        def accept_alert: (?Alerts::Prompt? prompt) -> void
+
+        def dismiss_alert: (?Alerts::Prompt? prompt) -> void
+
+        def send_alert_text: (String keys, ?Alerts::Prompt? prompt) -> String
+
+        def alert_text: (?Alerts::Prompt? prompt) -> String
+
+        def alert_type: (?Alerts::Prompt? prompt) -> String
+
+        def alert_default_value: (?Alerts::Prompt? prompt) -> String?
+
         private
+
+        def close_prompt: (Alerts::Prompt prompt, accept: bool, ?text: String?) -> void
 
         def execute: (Symbol command, *untyped) -> untyped
 

@@ -132,19 +132,20 @@ module Selenium
         # alerts
         #
 
-        def accept_alert
+        # The prompt is the one a BiDi alert handler was given; classic commands act on the current window's alert
+        def accept_alert(_prompt = nil)
           execute :accept_alert
         end
 
-        def dismiss_alert
+        def dismiss_alert(_prompt = nil)
           execute :dismiss_alert
         end
 
-        def alert=(keys)
+        def send_alert_text(keys, _prompt = nil)
           execute :send_alert_text, {}, {value: keys.chars, text: keys}
         end
 
-        def alert_text
+        def alert_text(_prompt = nil)
           execute :get_alert_text
         end
 
@@ -601,6 +602,9 @@ module Selenium
           raise WebDriver::Error::WebDriverError, connection_error_message
         end
         alias connection bidi
+        alias alerts bidi
+        alias alert_type bidi
+        alias alert_default_value bidi
         alias install_web_extension bidi
         alias uninstall_web_extension bidi
 
