@@ -36,21 +36,30 @@ module Selenium
           it 'raises a clear error when webSocketUrl is returned as a boolean' do
             stub_new_session(true)
 
-            expect { bridge.create_session(Capabilities.new) }
+            expect { bridge.create_session({}) }
               .to raise_error(Error::WebDriverError, /did not return a valid webSocketUrl/)
           end
 
           it 'raises a clear error when webSocketUrl is not a ws(s) url' do
             stub_new_session('http://localhost:1234/session/foo')
 
-            expect { bridge.create_session(Capabilities.new) }
+            expect { bridge.create_session({}) }
               .to raise_error(Error::WebDriverError, /did not return a valid webSocketUrl/)
+          end
+
+          it 'asks the remote end to leave every prompt open' do
+            stub_new_session(true)
+
+            expect { bridge.create_session('browserName' => 'safari') }.to raise_error(Error::WebDriverError)
+            expect(http).to have_received(:request).with(
+              :post, anything, anything, include('"unhandledPromptBehavior":{"default":"ignore"}')
+            )
           end
 
           it 'quits the remote session when the webSocketUrl is invalid' do
             stub_new_session(true)
 
-            expect { bridge.create_session(Capabilities.new) }.to raise_error(Error::WebDriverError)
+            expect { bridge.create_session({}) }.to raise_error(Error::WebDriverError)
             expect(http).to have_received(:request).at_least(:twice)
           end
         end
@@ -67,7 +76,11 @@ module Selenium
             allow(http).to receive(:request).with(:get, URI("#{session_url}/title"), any_args)
                                             .and_return('value' => 'title')
             allow(BiDi).to receive(:new).and_return(instance_double(BiDi, ws: connection, close: nil))
-            bridge.create_session(Capabilities.new)
+            allow(connection).to receive_messages(event_receiver: BiDi::Dispatcher.new,
+                                                  send_cmd: {'result' => {'subscription' => 'sub-1'}})
+            allow(connection).to receive(:send_cmd).with(hash_including(method: 'browsingContext.getTree'))
+                                                   .and_return('result' => {'contexts' => []})
+            bridge.create_session({})
             bridge.listener_errors.add(error)
           end
 
@@ -116,7 +129,7 @@ module Selenium
             stub_new_session('ws://localhost/session/foo')
             allow(http).to receive(:request).with(:get, window_url, any_args).and_return('value' => 'window-1')
             allow(http).to receive(:request).with(:post, window_url, any_args).and_return('value' => nil)
-            allow(BiDi).to receive(:new).and_return(instance_double(BiDi, ws: connection))
+            allow(BiDi).to receive(:new).and_return(instance_double(BiDi, ws: connection, close: nil))
             navigate_result = {'navigation' => nil, 'url' => 'about:blank'}
             allow(connection).to receive_messages(event_receiver: BiDi::Dispatcher.new,
                                                   send_cmd: {'result' => navigate_result})
@@ -124,7 +137,7 @@ module Selenium
                                                    .and_return('result' => {'subscription' => 'sub-1'})
             allow(connection).to receive(:send_cmd).with(hash_including(method: 'browsingContext.getTree'))
                                                    .and_return('result' => {'contexts' => []})
-            bridge.create_session(Capabilities.new)
+            bridge.create_session({})
           end
 
           it 'navigates the window it switched to' do

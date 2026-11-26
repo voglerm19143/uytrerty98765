@@ -26,11 +26,14 @@ module Selenium
       class BiDiBridge < Bridge
         include BiDiCommands
 
-        attr_reader :bidi, :connection, :context_tree, :listener_errors
+        attr_reader :bidi, :connection, :context_tree, :listener_errors, :alerts
 
         def create_session(capabilities)
           @listener_errors = ListenerErrors.new
+          @alerts = Alerts.new(self, capabilities)
           super
+          # The remote end reports the 'ignore' it was sent, which is not what applies
+          @capabilities[:unhandled_prompt_behavior] = @alerts.unhandled_prompt_behavior
 
           begin
             @bidi = Selenium::WebDriver::BiDi.new(url: validated_socket_url)
@@ -39,6 +42,7 @@ module Selenium
             @connection.before_send << ->(_payload) { @listener_errors.check }
             @context_tree = BiDi::ContextTree.new(@connection)
             @current_window = window_handle
+            @alerts.subscribe
           rescue StandardError
             quit
             raise
@@ -59,11 +63,54 @@ module Selenium
           execute(:close_window).tap { |handles| bidi.close if handles.empty? }
         end
 
+        def accept_alert(prompt = nil)
+          prompt ||= @alerts.current
+          # Sent explicitly: remote ends accept a prompt with empty text rather than its default
+          text = prompt.keys || prompt.default_value if prompt.type == 'prompt'
+          close_prompt(prompt, accept: true, text: text)
+        end
+
+        def dismiss_alert(prompt = nil)
+          close_prompt(prompt || @alerts.current, accept: false)
+        end
+
+        def send_alert_text(keys, prompt = nil)
+          prompt ||= @alerts.current
+          raise Error::ElementNotInteractableError, "#{prompt.type} does not take text" unless prompt.type == 'prompt'
+
+          # BiDi sends text only with the accept, so a dismissed prompt never receives it
+          WebDriver.logger.debug('Keys for a prompt are sent when it is accepted', id: :alerts)
+          prompt.keys = keys
+        end
+
+        def alert_text(prompt = nil)
+          (prompt || @alerts.current).text
+        end
+
+        def alert_type(prompt = nil)
+          (prompt || @alerts.current).type
+        end
+
+        def alert_default_value(prompt = nil)
+          (prompt || @alerts.current).default_value
+        end
+
         private
+
+        def close_prompt(prompt, accept:, text: nil)
+          bidi_browsing_context.handle_user_prompt(context: prompt.context, accept: accept,
+                                                   user_text: text || BiDi::Serialization::UNSET)
+          @alerts.forget(prompt)
+        end
 
         def execute(command, *)
           @listener_errors.check unless command == :delete_session
-          super
+          begin
+            super
+          rescue Error::WebDriverError => e
+            @alerts.manage_exception(e)
+            super
+          end
         end
 
         def validated_socket_url
